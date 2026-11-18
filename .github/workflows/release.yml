@@ -1,0 +1,61 @@
+# 发版流水线（市场规范：tag = manifest version，无 v 前缀）。
+# 推送 x.y.z tag 触发：校验 manifest → 校验 tag 与版本一致 → 跑测试 → 从 src 构建 → 生成 checksums → 发 Release 附件。
+# 产物必须由本 Action 从源码构建（索引仓 CI 会核对 SHA256），不要手工上传本地产物。
+name: release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # package-lock.json 已提交，锁定 esbuild 0.25.12 等构建依赖
+      - name: Install
+        run: npm ci
+
+      - name: Check tag matches manifest version
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./manifest.json').version")"
+          if [ "$VERSION" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::manifest version ($VERSION) != tag (${GITHUB_REF_NAME})"
+            exit 1
+          fi
+          echo "version $VERSION"
+
+      - name: Test
+        run: npm test
+
+      - name: Build plugin bundle
+        run: npm run build
+
+      # 市场只固定下载 manifest.json / main.js / styles.css 三个扁平附件，
+      # 因此从 plugin/ 目录取构建产物，而不是仓库根的源文件。
+      - name: Stage artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp plugin/main.js plugin/manifest.json plugin/styles.css dist/
+          cd dist && sha256sum main.js manifest.json styles.css > checksums.txt && cat checksums.txt
+
+      - name: Create GitHub Release with plugin artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          files: |
+            dist/main.js
+            dist/manifest.json
+            dist/styles.css

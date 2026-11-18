@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="title">
+  <title id="title">轻译</title>
+  <desc>深靛蓝底色上，一枚青色到琥珀色的对话气泡，气泡内含「文 / A」双语对照与双向箭头，右上角有翻译闪光。</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1E2A63"/>
+      <stop offset="0.55" stop-color="#171C46"/>
+      <stop offset="1" stop-color="#0C1030"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#5CE1E6"/>
+      <stop offset="0.48" stop-color="#4F9DF7"/>
+      <stop offset="1" stop-color="#8B7CF7"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0F1B3D"/>
+      <stop offset="1" stop-color="#1B2B5E"/>
+    </linearGradient>
+    <linearGradient id="swirl" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FDE68A"/>
+      <stop offset="1" stop-color="#F59E0B"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(404 104) rotate(90) scale(132)">
+      <stop stop-color="#8B7CF7" stop-opacity=".42"/>
+      <stop offset="1" stop-color="#8B7CF7" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="tealGlow" cx="0" cy="0" r="1" gradientTransform="translate(112 392) rotate(-42) scale(140)">
+      <stop stop-color="#22D3EE" stop-opacity=".30"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="drop" x="60" y="76" width="392" height="380" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="116" fill="url(#background)"/>
+  <circle cx="404" cy="104" r="132" fill="url(#glow)"/>
+  <circle cx="112" cy="392" r="140" fill="url(#tealGlow)"/>
+
+  <!-- 对话气泡：轻译的主体，暗示「把一句话换成另一种语言」 -->
+  <path d="M112 158c0-26 21-47 47-47h194c26 0 47 21 47 47v170c0 26-21 47-47 47H216l-78 66v-66h-26c-26 0-47-21-47-47V158Z"
+        fill="#050B22" opacity=".45" filter="url(#drop)" transform="translate(0 14)"/>
+  <path d="M112 158c0-26 21-47 47-47h194c26 0 47 21 47 47v170c0 26-21 47-47 47H216l-78 66v-66h-26c-26 0-47-21-47-47V158Z"
+        fill="url(#bubble)"/>
+
+  <!-- 内层深色纸面，承载文字 -->
+  <path d="M152 156c0-13 11-24 24-24h162c13 0 24 11 24 24v132c0 13-11 24-24 24H210l-58 48v-48c-7-1-12-7-12-15V156Z"
+        fill="url(#ink)" opacity=".92"/>
+
+  <!-- 「文」：源语言 -->
+  <g fill="#7FF0F4">
+    <rect x="176" y="160" width="38" height="9" rx="4.5"/>
+    <rect x="190.5" y="152" width="9" height="25" rx="4.5"/>
+    <rect x="172" y="188" width="46" height="7.5" rx="3.75" opacity=".9"/>
+    <rect x="172" y="203" width="46" height="7.5" rx="3.75" opacity=".72"/>
+    <rect x="172" y="218" width="30" height="7.5" rx="3.75" opacity=".55"/>
+  </g>
+
+  <!-- 「A」：目标语言 -->
+  <g fill="none" stroke="#FFD79A" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M272 226l27-64 27 64"/>
+    <path d="M283 200h32"/>
+  </g>
+
+  <!-- 双向箭头：翻译方向可互换 -->
+  <g fill="none" stroke="#FDE68A" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M204 264h84"/>
+    <path d="M274 250l14 14-14 14"/>
+    <path d="M298 296H214"/>
+    <path d="M228 282l-14 14 14 14"/>
+  </g>
+
+  <!-- 闪光：一次「瞬间完成」的翻译 -->
+  <path d="M398 62c7 27 15 35 42 42-27 7-35 15-42 42-7-27-15-35-42-42 27-7 35-15 42-42Z" fill="url(#swirl)"/>
+  <circle cx="446" cy="147" r="8" fill="#FFE8A9" opacity=".9"/>
+  <circle cx="357" cy="50" r="5" fill="#FFE8A9" opacity=".7"/>
+</svg>

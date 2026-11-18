@@ -3,3 +3,4 @@ artifacts/
 .ccgui/
 *.local.json
 dist/
+plugin/docs/

@@ -265,7 +265,7 @@ function webCrypto() {
 }
 function randomNonce() {
   const crypto = webCrypto();
-  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID().replaceAll("-", "");
   return [...crypto.getRandomValues(new Uint8Array(16))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 async function sha256Hex(value) {

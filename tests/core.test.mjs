@@ -43,6 +43,7 @@ test('Baidu translation sends the official signed form request and reads its res
   assert.equal(form.get('to'), 'zh');
   assert.equal(form.get('appid'), 'baidu-id');
   assert.ok(salt);
+  assert.match(salt, /^[A-Za-z0-9]+$/);
   assert.equal(form.get('sign'), createHash('md5').update(`baidu-idHello world${salt}baidu-secret`, 'utf8').digest('hex'));
   assert.doesNotMatch(request.body, /baidu-secret/);
 });
@@ -110,6 +111,7 @@ test('Youdao translation signs its v3 form request and extracts the detected sou
   assert.equal(form.get('from'), 'auto');
   assert.equal(form.get('to'), 'zh-CHS');
   assert.equal(form.get('signType'), 'v3');
+  assert.match(salt, /^[A-Za-z0-9]+$/);
   assert.equal(form.get('sign'), expected);
   assert.doesNotMatch(request.body, /youdao-secret/);
 });

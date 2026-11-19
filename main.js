@@ -481,7 +481,7 @@ ${path}`;
       }));
       if (String(data2.errorCode) !== "0") throw new Error(`有道翻译返回错误（${String(data2.errorCode || "未知").slice(0, 12)}），请检查应用 ID、密钥、服务配置和语言方向。`);
       const detected = String(data2.l || "").split("2")[0];
-      return { text: Array.isArray(data2.translation) ? data2.translation.join("") : "", detected: canonicalLanguage(detected) };
+      return { text: Array.isArray(data2.translation) ? data2.translation.join("\n") : "", detected: canonicalLanguage(detected) };
     }
     if (!config.model.trim()) throw new Error("请先在翻译设置中填写模型名称。");
     const instructions = translationInstructions(config);

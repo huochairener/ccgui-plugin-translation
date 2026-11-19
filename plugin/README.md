@@ -70,8 +70,8 @@ npm run test:live
 发布：升 `manifest.json` 与 `package.json` 的 `version`，打与 version 完全一致的 tag 并推送（无 `v` 前缀），`.github/workflows/release.yml` 会从源码构建并把 `main.js` / `manifest.json` / `styles.css` 附加到该 Release。
 
 ```powershell
-git tag 1.0.0
-git push origin 1.0.0
+git tag 2.0.0
+git push origin 2.0.0
 ```
 
 main.js 为 esbuild 生成的单文件 ESM，无外部运行依赖，使用宿主 ctx.react。只修改 src / styles.css 后重新构建，不要直接修改生成的 main.js。浏览器测试使用本机 Chrome（可用 CHROME_PATH 指定路径），模拟 SDK bridge 验证界面交互；实际宿主和供应商联调仍以 CC GUI 为准。

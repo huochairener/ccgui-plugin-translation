@@ -9,10 +9,13 @@ export const LANGUAGES = [
 export const DEFAULTS = Object.freeze({
   source: 'auto', target: 'zh-Hans', engine: 'bing', protocol: 'responses', style: 'general',
   baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4.1-mini',
+  baiduAppId: '', baiduSecretKey: '',
+  alibabaAccessKeyId: '', alibabaAccessKeySecret: '',
+  youdaoAppId: '', youdaoAppKey: '',
 });
 export const languageName = code => LANGUAGES.find(([id]) => id === code)?.[1] || code;
 export const languageNameEn = code => LANGUAGES.find(([id]) => id === code)?.[2] || code;
-export const engineName = code => ({ bing: 'Bing', google: 'Google', ai: '自定义 AI' })[code] || code;
+export const engineName = code => ({ bing: 'Bing', google: 'Google', ai: '自定义 AI', baidu: '百度翻译', alibaba: '阿里云翻译', youdao: '有道翻译' })[code] || code;
 export const styleName = code => STYLES.find(([id]) => id === code)?.[1] || code;
 
 // Script detection is only used to skip pointless round trips (text already in
@@ -155,7 +158,7 @@ export function normalizeSettings(input = {}) {
   for (const key of Object.keys(config)) if (typeof input?.[key] === 'string') config[key] = input[key];
   if (!LANGUAGES.some(([id]) => id === config.source)) config.source = DEFAULTS.source;
   if (!LANGUAGES.some(([id]) => id === config.target && id !== 'auto')) config.target = DEFAULTS.target;
-  if (!['bing', 'google', 'ai'].includes(config.engine)) config.engine = DEFAULTS.engine;
+  if (!['bing', 'google', 'ai', 'baidu', 'alibaba', 'youdao'].includes(config.engine)) config.engine = DEFAULTS.engine;
   if (!['chat', 'responses'].includes(config.protocol)) config.protocol = DEFAULTS.protocol;
   if (!STYLES.some(([id]) => id === config.style)) config.style = DEFAULTS.style;
   return config;
@@ -200,6 +203,98 @@ export function splitText(text, limit = 3500) {
     offset = end;
   }
   return chunks;
+}
+
+const UTF8 = new TextEncoder();
+const MD5_SHIFTS = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21];
+// Web Crypto omits MD5; provider signatures require it, and core tests compare it with Node crypto.
+const MD5_K = Array.from({ length: 64 }, (_, i) => Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000));
+
+function md5Bytes(value) {
+  const data = UTF8.encode(value);
+  const paddedLength = Math.ceil((data.length + 9) / 64) * 64;
+  const padded = new Uint8Array(paddedLength);
+  padded.set(data); padded[data.length] = 0x80;
+  const view = new DataView(padded.buffer);
+  const bitLength = data.length * 8;
+  view.setUint32(paddedLength - 8, bitLength >>> 0, true);
+  view.setUint32(paddedLength - 4, Math.floor(bitLength / 0x100000000), true);
+
+  let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+  for (let offset = 0; offset < paddedLength; offset += 64) {
+    const words = Array.from({ length: 16 }, (_, i) => view.getUint32(offset + i * 4, true));
+    let a = a0, b = b0, c = c0, d = d0;
+    for (let i = 0; i < 64; i++) {
+      let f, g;
+      if (i < 16) { f = (b & c) | (~b & d); g = i; }
+      else if (i < 32) { f = (d & b) | (~d & c); g = (5 * i + 1) % 16; }
+      else if (i < 48) { f = b ^ c ^ d; g = (3 * i + 5) % 16; }
+      else { f = c ^ (b | ~d); g = (7 * i) % 16; }
+      const shift = MD5_SHIFTS[Math.floor(i / 16) * 4 + (i % 4)];
+      const sum = (a + f + MD5_K[i] + words[g]) >>> 0;
+      const rotated = (sum << shift) | (sum >>> (32 - shift));
+      [a, b, c, d] = [d, (b + rotated) >>> 0, b, c];
+    }
+    a0 = (a0 + a) >>> 0; b0 = (b0 + b) >>> 0; c0 = (c0 + c) >>> 0; d0 = (d0 + d) >>> 0;
+  }
+  const output = new Uint8Array(16), outputView = new DataView(output.buffer);
+  [a0, b0, c0, d0].forEach((value, i) => outputView.setUint32(i * 4, value, true));
+  return output;
+}
+
+function base64(bytes) {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return globalThis.btoa(binary);
+}
+
+function webCrypto() {
+  if (!globalThis.crypto?.subtle) throw new Error('当前运行环境缺少安全签名接口，请更新 CC GUI 后重试。');
+  return globalThis.crypto;
+}
+
+function randomNonce() {
+  const crypto = webCrypto();
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return [...crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function sha256Hex(value) {
+  const digest = new Uint8Array(await webCrypto().subtle.digest('SHA-256', UTF8.encode(value)));
+  return [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function hmacSha1Base64(secret, value) {
+  const crypto = webCrypto();
+  const key = await crypto.subtle.importKey('raw', UTF8.encode(secret), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+  return base64(new Uint8Array(await crypto.subtle.sign('HMAC', key, UTF8.encode(value))));
+}
+
+const PROVIDER_LANGUAGES = {
+  baidu: { auto: 'auto', en: 'en', 'zh-Hans': 'zh', 'zh-Hant': 'cht', ja: 'jp', ko: 'kor', fr: 'fra', de: 'de', es: 'spa', ru: 'ru', pt: 'pt', it: 'it', ar: 'ara', hi: 'hi', th: 'th', vi: 'vie', id: 'id', tr: 'tr', nl: 'nl', pl: 'pl', uk: 'uk', sv: 'swe', fi: 'fin', he: 'heb', ms: 'may' },
+  alibaba: { auto: 'auto', en: 'en', 'zh-Hans': 'zh', 'zh-Hant': 'zh-tw', ja: 'ja', ko: 'ko', fr: 'fr', de: 'de', es: 'es', ru: 'ru', pt: 'pt', it: 'it', ar: 'ar', hi: 'hi', th: 'th', vi: 'vi', id: 'id', tr: 'tr', nl: 'nl', pl: 'pl', uk: 'uk', sv: 'sv', fi: 'fi', he: 'he', ms: 'ms' },
+  youdao: { auto: 'auto', en: 'en', 'zh-Hans': 'zh-CHS', 'zh-Hant': 'zh-CHT', ja: 'ja', ko: 'ko', fr: 'fr', de: 'de', es: 'es', ru: 'ru', pt: 'pt', it: 'it', ar: 'ar', hi: 'hi', th: 'th', vi: 'vi', id: 'id', tr: 'tr', nl: 'nl', pl: 'pl', uk: 'uk', sv: 'sv', fi: 'fi', he: 'he', ms: 'ms' },
+};
+
+function providerLanguage(engine, code) {
+  const value = PROVIDER_LANGUAGES[engine]?.[code];
+  if (!value) throw new Error(`${engineName(engine)}暂不支持“${languageName(code)}”，请更换语言或翻译引擎。`);
+  return value;
+}
+
+function canonicalLanguage(code) {
+  const normalized = String(code || '').toLowerCase();
+  return ({ zh: 'zh-Hans', 'zh-cn': 'zh-Hans', 'zh-chs': 'zh-Hans', cht: 'zh-Hant', 'zh-tw': 'zh-Hant', 'zh-cht': 'zh-Hant', jp: 'ja', kor: 'ko', fra: 'fr', spa: 'es', ara: 'ar', vie: 'vi', swe: 'sv', fin: 'fi', heb: 'he', may: 'ms' })[normalized] || code || null;
+}
+
+function requireProviderCredentials(config) {
+  const fields = {
+    baidu: [['baiduAppId', '百度 APP ID'], ['baiduSecretKey', '百度密钥']],
+    alibaba: [['alibabaAccessKeyId', '阿里云 AccessKey ID'], ['alibabaAccessKeySecret', '阿里云 AccessKey Secret']],
+    youdao: [['youdaoAppId', '有道应用 ID'], ['youdaoAppKey', '有道应用密钥']],
+  }[config.engine];
+  if (!fields) return;
+  for (const [key, label] of fields) if (!config[key]?.trim()) throw new Error(`请先在设置中填写${label}。`);
 }
 
 function aborted() { const e = new Error('已取消翻译'); e.name = 'AbortError'; return e; }
@@ -286,6 +381,62 @@ export function createTranslator(invoke) {
         } catch (error) { if (attempt === 0 && error.status === 401) { token = null; } else throw error; }
       }
     }
+    if (config.engine === 'baidu') {
+      requireProviderCredentials(config);
+      const source = providerLanguage('baidu', config.source), target = providerLanguage('baidu', config.target);
+      const salt = randomNonce();
+      const sign = [...md5Bytes(`${config.baiduAppId.trim()}${text}${salt}${config.baiduSecretKey.trim()}`)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+      const form = new URLSearchParams({ q: text, from: source, to: target, appid: config.baiduAppId.trim(), salt, sign });
+      const data = json(await request({
+        method: 'POST', url: 'https://fanyi-api.baidu.com/api/trans/vip/translate',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' }, body: form.toString(),
+      }));
+      if (data.error_code) throw new Error(`百度翻译返回错误（${String(data.error_code).slice(0, 12)}），请检查 APP ID、密钥、服务权限和语言方向。`);
+      return { text: data.trans_result?.map(item => item?.dst || '').join('\n'), detected: canonicalLanguage(data.from) };
+    }
+    if (config.engine === 'alibaba') {
+      requireProviderCredentials(config);
+      const path = '/api/translate/web/general';
+      const body = JSON.stringify({
+        FormatType: 'text', SourceLanguage: providerLanguage('alibaba', config.source),
+        TargetLanguage: providerLanguage('alibaba', config.target), SourceText: text, Scene: 'general',
+      });
+      const contentMd5 = base64(md5Bytes(body));
+      const nonce = randomNonce();
+      const headers = {
+        Accept: 'application/json',
+        'Content-MD5': contentMd5,
+        'Content-Type': 'application/json;charset=utf-8',
+        Date: new Date().toUTCString(),
+        'x-acs-signature-method': 'HMAC-SHA1',
+        'x-acs-signature-nonce': nonce,
+        'x-acs-version': '2019-01-02',
+      };
+      const stringToSign = `POST\n${headers.Accept}\n${contentMd5}\n${headers['Content-Type']}\n${headers.Date}\nx-acs-signature-method:HMAC-SHA1\nx-acs-signature-nonce:${nonce}\nx-acs-version:2019-01-02\n${path}`;
+      const signature = await hmacSha1Base64(config.alibabaAccessKeySecret.trim(), stringToSign);
+      headers.Authorization = `acs ${config.alibabaAccessKeyId.trim()}:${signature}`;
+      const data = json(await request({ method: 'POST', url: `https://mt.cn-hangzhou.aliyuncs.com${path}`, headers, body }));
+      const response = data.TranslateGeneralResponse || data;
+      if (String(response.Code) !== '200') throw new Error(`阿里云机器翻译返回错误（${String(response.Code || '未知').slice(0, 12)}），请检查 AccessKey 权限、服务开通状态和语言方向。`);
+      return { text: response.Data?.Translated || '', detected: canonicalLanguage(response.Data?.DetectedLanguage) };
+    }
+    if (config.engine === 'youdao') {
+      requireProviderCredentials(config);
+      const salt = randomNonce(), curtime = String(Math.floor(Date.now() / 1000));
+      const input = text.length <= 20 ? text : `${text.slice(0, 10)}${text.length}${text.slice(-10)}`;
+      const sign = await sha256Hex(`${config.youdaoAppId.trim()}${input}${salt}${curtime}${config.youdaoAppKey.trim()}`);
+      const form = new URLSearchParams({
+        q: text, from: providerLanguage('youdao', config.source), to: providerLanguage('youdao', config.target),
+        appKey: config.youdaoAppId.trim(), salt, sign, signType: 'v3', curtime,
+      });
+      const data = json(await request({
+        method: 'POST', url: 'https://openapi.youdao.com/api',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' }, body: form.toString(),
+      }));
+      if (String(data.errorCode) !== '0') throw new Error(`有道翻译返回错误（${String(data.errorCode || '未知').slice(0, 12)}），请检查应用 ID、密钥、服务配置和语言方向。`);
+      const detected = String(data.l || '').split('2')[0];
+      return { text: Array.isArray(data.translation) ? data.translation.join('\n') : '', detected: canonicalLanguage(detected) };
+    }
     if (!config.model.trim()) throw new Error('请先在翻译设置中填写模型名称。');
     const instructions = translationInstructions(config);
     const payload = requestPrompt(config, text);
@@ -338,7 +489,7 @@ export function createTranslator(invoke) {
       // Same language in and out: hand the text back untouched instead of asking
       // a model to "translate" it, which it tends to answer as a conversation.
       if (isAlreadyInTarget(config, text)) return { text, detected: detectLanguage(text) || null, passthrough: true };
-      const pieces = splitText(text, config.engine === 'google' ? 1500 : config.engine === 'bing' ? 1000 : 3500);
+      const pieces = splitText(text, ['bing', 'baidu', 'youdao'].includes(config.engine) ? 1000 : config.engine === 'google' ? 1500 : 3500);
       const results = [];
       for (const piece of pieces) {
         if (closed || options.isCancelled?.()) throw aborted();

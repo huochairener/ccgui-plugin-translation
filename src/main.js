@@ -106,7 +106,16 @@ export default function activate(ctx) {
       return () => document.removeEventListener('pointerdown', onPointerDown, true);
     }, [modelOpen]);
     const change = (key, value) => { dirty.current = true; setForm(previous => ({ ...previous, [key]: value })); if (key === 'baseUrl' || key === 'apiKey') setModelOptions([]); setNotice(''); };
-    function validate() { if (form.engine === 'ai') { aiEndpoint(form.baseUrl, form.protocol); if (!form.model.trim()) throw new Error('请填写模型名称。'); } }
+    function validate() {
+      if (form.engine === 'ai') { aiEndpoint(form.baseUrl, form.protocol); if (!form.model.trim()) throw new Error('请填写模型名称。'); return; }
+      const fields = {
+        baidu: [['baiduAppId', '百度 APP ID'], ['baiduSecretKey', '百度密钥']],
+        alibaba: [['alibabaAccessKeyId', '阿里云 AccessKey ID'], ['alibabaAccessKeySecret', '阿里云 AccessKey Secret']],
+        youdao: [['youdaoAppId', '有道应用 ID'], ['youdaoAppKey', '有道应用密钥']],
+      }[form.engine] || [];
+      const missing = fields.find(([key]) => !form[key]?.trim());
+      if (missing) throw new Error(`请填写${missing[1]}。`);
+    }
     async function save() {
       try {
         validate(); setBusy(true); controller.clearTranslations(); await model.updateSettings(form);
@@ -117,7 +126,9 @@ export default function activate(ctx) {
     async function testConnection() {
       try {
         validate(); setBusy(true); setNotice('正在测试…');
-        const result = await translator.translate('Hello, world!', form, { isCancelled: () => !alive.current });
+        translator.clear();
+        const probe = { ...form, source: 'en', target: form.target === 'en' ? 'zh-Hans' : form.target };
+        const result = await translator.translate('Hello, world!', probe, { isCancelled: () => !alive.current });
         if (alive.current) setNotice(`连接成功：${result.text}`);
       } catch (error) { if (alive.current && error.name !== 'AbortError') setNotice(error.message); }
       finally { if (alive.current) setBusy(false); }
@@ -145,13 +156,42 @@ export default function activate(ctx) {
     }
     const field = (label, content, help) => h('div', { className: 'ct-field' }, h('label', { className: 'ct-field-label' }, label, content), help && h('p', { className: 'ct-help' }, help));
     const textInput = (label, key, props = {}) => field(label, h('input', { className: 'ct-setting-input', value: form[key], onChange: e => change(key, e.target.value), autoComplete: 'off', spellCheck: false, ...props }));
+    const secretInput = (label, key, placeholder) => textInput(label, key, { type: 'password', placeholder, autoComplete: 'new-password' });
+    const externalLink = (href, label) => h('a', { href, target: '_blank', rel: 'noreferrer' }, label);
+    const providerFields = form.engine === 'baidu' && h('div', { className: 'ct-provider-fields' },
+      h('h4', null, '申请百度翻译 API'),
+      h('ol', null,
+        h('li', null, externalLink('https://fanyi-api.baidu.com/manage/developer', '打开百度翻译开放平台开发者管理'), '，登录并完成开发者注册。'),
+        h('li', null, '在控制台开通通用翻译 API 并创建应用。'),
+        h('li', null, '进入开发者信息，复制 APP ID 和密钥，分别填入下方字段。')),
+      h('div', { className: 'ct-provider-fields-grid' }, textInput('百度 APP ID', 'baiduAppId', { placeholder: '申请后获得的 APP ID' }), secretInput('百度密钥', 'baiduSecretKey', '申请后获得的密钥')),
+      h('p', { className: 'ct-help' }, '插件使用百度通用翻译接口。凭证保存在本机插件存储中，非加密保险库。'));
+    const alibabaFields = form.engine === 'alibaba' && h('div', { className: 'ct-provider-fields' },
+      h('h4', null, '申请阿里云机器翻译'),
+      h('ol', null,
+        h('li', null, externalLink('https://www.aliyun.com/product/ai/alimt', '打开阿里云机器翻译产品页'), '，在控制台开通机器翻译通用版。'),
+        h('li', null, externalLink('https://ram.console.aliyun.com/users', '进入 RAM 用户管理'), '，创建用于插件的 RAM 用户并开启 OpenAPI 调用访问，只授予机器翻译 TranslateGeneral 所需权限。'),
+        h('li', null, externalLink('https://ram.console.aliyun.com/manage/ak', '打开 AccessKey 管理'), '，为该 RAM 用户创建 AccessKey，复制 AccessKey ID 和 AccessKey Secret。'),
+        h('li', null, '将 ID 和 Secret 分别填入下方字段。')),
+      h('div', { className: 'ct-provider-fields-grid' }, textInput('阿里云 AccessKey ID', 'alibabaAccessKeyId', { placeholder: 'RAM 用户的 AccessKey ID' }), secretInput('阿里云 AccessKey Secret', 'alibabaAccessKeySecret', 'RAM 用户的 AccessKey Secret')),
+      h('p', { className: 'ct-help' }, '接口调用使用阿里云机器翻译 REST API，签名在本机生成；AccessKey 凭证保存在本机插件存储中，非加密保险库。'));
+    const youdaoFields = form.engine === 'youdao' && h('div', { className: 'ct-provider-fields' },
+      h('h4', null, '申请有道智云文本翻译'),
+      h('ol', null,
+        h('li', null, externalLink('https://ai.youdao.com/', '打开有道智云 AI 开放平台'), '，注册并登录开发者账号。'),
+        h('li', null, externalLink('https://ai.youdao.com/console/', '前往控制台'), '。'),
+        h('li', null, '进入应用管理创建应用，选择自然语言翻译中的文本翻译服务和 API 接入方式。'),
+        h('li', null, '在应用总览中复制应用 ID（APP Key）和应用密钥（APP Secret），分别填入下方字段。')),
+      h('div', { className: 'ct-provider-fields-grid' }, textInput('有道应用 ID（APP Key）', 'youdaoAppId', { placeholder: '应用总览中的 APP Key' }), secretInput('有道应用密钥（APP Secret）', 'youdaoAppKey', '应用总览中的 APP Secret')),
+      h('p', { className: 'ct-help' }, '签名按有道文本翻译 API v3 规则在本机生成；凭证保存在本机插件存储中，非加密保险库。'));
     return h('div', { className: 'ct-settings', 'data-ct-ui': '' },
       h('div', { className: 'ct-settings-title' }, h('span', { className: 'ct-brand-icon ct-brand-icon-large' }, h(Icon, { name: 'translate', width: 24, height: 24 })), h('div', null, h('h2', null, '轻译设置'), h('p', { className: 'ct-muted' }, '让语言成为沟通的桥梁。'))),
       h('section', { className: 'ct-settings-card' }, h('h3', null, '翻译语言'), h('p', { className: 'ct-help' }, '选区翻译、输入翻译和回复翻译共用以下语言设置。'),
         h('div', { className: 'ct-settings-languages' }, field('源语言', h(LanguageSelect, { label: '默认源语言', value: form.source, onChange: value => change('source', value) })), h(Icon, { name: 'arrow' }), field('目标语言', h(LanguageSelect, { label: '默认目标语言', value: form.target, target: true, onChange: value => change('target', value) })))),
       h('section', { className: 'ct-settings-card' }, h('h3', null, '翻译引擎'),
-        h('div', { className: 'ct-engine-options', role: 'radiogroup', 'aria-label': '翻译引擎' }, [['bing', 'Bing', '必应翻译'], ['google', 'Google', '谷歌翻译'], ['ai', '自定义 AI', '连接你的模型']].map(([id, name, description]) => h('label', { key: id, className: `ct-engine-option${form.engine === id ? ' ct-selected' : ''}` }, h('input', { type: 'radio', name: 'ct-engine', value: id, checked: form.engine === id, onChange: () => change('engine', id) }), h('strong', null, name), h('span', null, description)))),
-        form.engine !== 'ai' && h('p', { className: 'ct-help ct-engine-help' }, '使用网页翻译接口，无需 API Key。可用性取决于网络和服务限制；Google 需要可访问其翻译服务的网络。'),
+        h('div', { className: 'ct-engine-options', role: 'radiogroup', 'aria-label': '翻译引擎' }, [['bing', 'Bing', '必应翻译'], ['google', 'Google', '谷歌翻译'], ['baidu', '百度翻译', '配置 APP ID 和密钥'], ['alibaba', '阿里云翻译', '配置 AccessKey'], ['youdao', '有道翻译', '配置应用 ID 和密钥'], ['ai', '自定义 AI', '连接你的模型']].map(([id, name, description]) => h('label', { key: id, className: `ct-engine-option${form.engine === id ? ' ct-selected' : ''}` }, h('input', { type: 'radio', name: 'ct-engine', value: id, checked: form.engine === id, onChange: () => change('engine', id) }), h('strong', null, name), h('span', null, description)))),
+        ['bing', 'google'].includes(form.engine) && h('p', { className: 'ct-help ct-engine-help' }, '使用网页翻译接口，无需 API Key。可用性取决于网络和服务限制；Google 需要可访问其翻译服务的网络。'),
+        providerFields, alibabaFields, youdaoFields,
         form.engine === 'ai' && h('div', { className: 'ct-ai-fields' },
           textInput('Base URL', 'baseUrl', { placeholder: 'https://api.example.com/v1' }),
           field('API 协议', h('select', { className: 'ct-setting-input', value: form.protocol, onChange: e => change('protocol', e.target.value) }, h('option', { value: 'responses' }, 'Responses · /responses'), h('option', { value: 'chat' }, 'Chat Completions · /chat/completions'))),

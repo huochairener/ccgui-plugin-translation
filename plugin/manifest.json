@@ -9,11 +9,12 @@
   "license": "MIT",
   "icon": "docs/icon.png",
   "screenshots": ["docs/screenshots/panel.png", "docs/screenshots/reply.png", "docs/screenshots/settings.png"],
-  "keywords": ["translate", "translation", "language", "bing", "google", "ai"],
-  "description": "选中文字右键翻译、状态栏自动翻译，以及模型回复旁的单条翻译。支持 Bing、Google 和自定义 AI。",
+  "keywords": ["translate", "translation", "language", "bing", "google", "baidu", "aliyun", "youdao", "ai"],
+  "description": "选中文字右键翻译、状态栏自动翻译，以及模型回复旁的单条翻译。支持 Bing、Google、百度、阿里云、有道和自定义 AI。",
   "permissions": [
     "storage", "ui:status-bar", "ui:overlay", "ui:settings-section", "theme",
     "network:www.bing.com", "network:cn.bing.com",
-    "network:translate.googleapis.com", "network:api.openai.com", "network:token.sensenova.cn", "network:localhost", "network:127.0.0.1"
+    "network:translate.googleapis.com", "network:api.openai.com", "network:token.sensenova.cn", "network:fanyi-api.baidu.com",
+    "network:mt.cn-hangzhou.aliyuncs.com", "network:openapi.youdao.com", "network:localhost", "network:127.0.0.1"
   ]
 }

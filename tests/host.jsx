@@ -63,6 +63,9 @@ const ctx = {
     await new Promise(r => setTimeout(r, 40));
     if (args.method === 'GET' && args.url.includes('bing.com/translator')) return { status: 200, body: '<html>IG:"test";params_AbusePreventionHelper = [123,"test-token",3600];<div data-iid="translator.5"></div></html>' };
     if (args.method === 'GET' && args.url.endsWith('/models')) return { status: 200, body: JSON.stringify({ data: [{ id: 'sensechat-5' }, { id: 'sensechat-4' }] }) };
+    if (args.url.includes('fanyi-api.baidu.com')) return { status: 200, body: JSON.stringify({ from: 'en', to: 'zh', trans_result: [{ src: 'Hello, world!', dst: '你好，世界！' }] }) };
+    if (args.url.includes('mt.cn-hangzhou.aliyuncs.com')) return { status: 200, body: JSON.stringify({ Code: 200, Data: { Translated: '你好，世界！', DetectedLanguage: 'en' } }) };
+    if (args.url.includes('openapi.youdao.com')) return { status: 200, body: JSON.stringify({ errorCode: '0', translation: ['你好，世界！'], l: 'en2zh-CHS' }) };
     const query = new URL(args.url).searchParams;
     let text = args.url.includes('bing.com') ? new URLSearchParams(args.body).get('text') : query.get('q');
     const ai = args.url.includes('/responses') || args.url.includes('/chat/completions');

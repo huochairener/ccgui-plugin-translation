@@ -34,11 +34,17 @@ var DEFAULTS = Object.freeze({
   style: "general",
   baseUrl: "https://api.openai.com/v1",
   apiKey: "",
-  model: "gpt-4.1-mini"
+  model: "gpt-4.1-mini",
+  baiduAppId: "",
+  baiduSecretKey: "",
+  alibabaAccessKeyId: "",
+  alibabaAccessKeySecret: "",
+  youdaoAppId: "",
+  youdaoAppKey: ""
 });
 var languageName = (code) => LANGUAGES.find(([id]) => id === code)?.[1] || code;
 var languageNameEn = (code) => LANGUAGES.find(([id]) => id === code)?.[2] || code;
-var engineName = (code) => ({ bing: "Bing", google: "Google", ai: "自定义 AI" })[code] || code;
+var engineName = (code) => ({ bing: "Bing", google: "Google", ai: "自定义 AI", baidu: "百度翻译", alibaba: "阿里云翻译", youdao: "有道翻译" })[code] || code;
 var SCRIPT = {
   han: /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g,
   kana: /[\u3040-\u30ff\u31f0-\u31ff]/g,
@@ -151,7 +157,7 @@ function normalizeSettings(input = {}) {
   for (const key of Object.keys(config)) if (typeof input?.[key] === "string") config[key] = input[key];
   if (!LANGUAGES.some(([id]) => id === config.source)) config.source = DEFAULTS.source;
   if (!LANGUAGES.some(([id]) => id === config.target && id !== "auto")) config.target = DEFAULTS.target;
-  if (!["bing", "google", "ai"].includes(config.engine)) config.engine = DEFAULTS.engine;
+  if (!["bing", "google", "ai", "baidu", "alibaba", "youdao"].includes(config.engine)) config.engine = DEFAULTS.engine;
   if (!["chat", "responses"].includes(config.protocol)) config.protocol = DEFAULTS.protocol;
   if (!STYLES.some(([id]) => id === config.style)) config.style = DEFAULTS.style;
   return config;
@@ -201,6 +207,98 @@ function splitText(text, limit = 3500) {
     offset = end;
   }
   return chunks;
+}
+var UTF8 = new TextEncoder();
+var MD5_SHIFTS = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21];
+var MD5_K = Array.from({ length: 64 }, (_, i) => Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296));
+function md5Bytes(value) {
+  const data = UTF8.encode(value);
+  const paddedLength = Math.ceil((data.length + 9) / 64) * 64;
+  const padded = new Uint8Array(paddedLength);
+  padded.set(data);
+  padded[data.length] = 128;
+  const view = new DataView(padded.buffer);
+  const bitLength = data.length * 8;
+  view.setUint32(paddedLength - 8, bitLength >>> 0, true);
+  view.setUint32(paddedLength - 4, Math.floor(bitLength / 4294967296), true);
+  let a0 = 1732584193, b0 = 4023233417, c0 = 2562383102, d0 = 271733878;
+  for (let offset = 0; offset < paddedLength; offset += 64) {
+    const words = Array.from({ length: 16 }, (_, i) => view.getUint32(offset + i * 4, true));
+    let a = a0, b = b0, c = c0, d = d0;
+    for (let i = 0; i < 64; i++) {
+      let f, g;
+      if (i < 16) {
+        f = b & c | ~b & d;
+        g = i;
+      } else if (i < 32) {
+        f = d & b | ~d & c;
+        g = (5 * i + 1) % 16;
+      } else if (i < 48) {
+        f = b ^ c ^ d;
+        g = (3 * i + 5) % 16;
+      } else {
+        f = c ^ (b | ~d);
+        g = 7 * i % 16;
+      }
+      const shift = MD5_SHIFTS[Math.floor(i / 16) * 4 + i % 4];
+      const sum = a + f + MD5_K[i] + words[g] >>> 0;
+      const rotated = sum << shift | sum >>> 32 - shift;
+      [a, b, c, d] = [d, b + rotated >>> 0, b, c];
+    }
+    a0 = a0 + a >>> 0;
+    b0 = b0 + b >>> 0;
+    c0 = c0 + c >>> 0;
+    d0 = d0 + d >>> 0;
+  }
+  const output = new Uint8Array(16), outputView = new DataView(output.buffer);
+  [a0, b0, c0, d0].forEach((value2, i) => outputView.setUint32(i * 4, value2, true));
+  return output;
+}
+function base64(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return globalThis.btoa(binary);
+}
+function webCrypto() {
+  if (!globalThis.crypto?.subtle) throw new Error("当前运行环境缺少安全签名接口，请更新 CC GUI 后重试。");
+  return globalThis.crypto;
+}
+function randomNonce() {
+  const crypto = webCrypto();
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return [...crypto.getRandomValues(new Uint8Array(16))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+async function sha256Hex(value) {
+  const digest = new Uint8Array(await webCrypto().subtle.digest("SHA-256", UTF8.encode(value)));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+async function hmacSha1Base64(secret, value) {
+  const crypto = webCrypto();
+  const key = await crypto.subtle.importKey("raw", UTF8.encode(secret), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+  return base64(new Uint8Array(await crypto.subtle.sign("HMAC", key, UTF8.encode(value))));
+}
+var PROVIDER_LANGUAGES = {
+  baidu: { auto: "auto", en: "en", "zh-Hans": "zh", "zh-Hant": "cht", ja: "jp", ko: "kor", fr: "fra", de: "de", es: "spa", ru: "ru", pt: "pt", it: "it", ar: "ara", hi: "hi", th: "th", vi: "vie", id: "id", tr: "tr", nl: "nl", pl: "pl", uk: "uk", sv: "swe", fi: "fin", he: "heb", ms: "may" },
+  alibaba: { auto: "auto", en: "en", "zh-Hans": "zh", "zh-Hant": "zh-tw", ja: "ja", ko: "ko", fr: "fr", de: "de", es: "es", ru: "ru", pt: "pt", it: "it", ar: "ar", hi: "hi", th: "th", vi: "vi", id: "id", tr: "tr", nl: "nl", pl: "pl", uk: "uk", sv: "sv", fi: "fi", he: "he", ms: "ms" },
+  youdao: { auto: "auto", en: "en", "zh-Hans": "zh-CHS", "zh-Hant": "zh-CHT", ja: "ja", ko: "ko", fr: "fr", de: "de", es: "es", ru: "ru", pt: "pt", it: "it", ar: "ar", hi: "hi", th: "th", vi: "vi", id: "id", tr: "tr", nl: "nl", pl: "pl", uk: "uk", sv: "sv", fi: "fi", he: "he", ms: "ms" }
+};
+function providerLanguage(engine, code) {
+  const value = PROVIDER_LANGUAGES[engine]?.[code];
+  if (!value) throw new Error(`${engineName(engine)}暂不支持“${languageName(code)}”，请更换语言或翻译引擎。`);
+  return value;
+}
+function canonicalLanguage(code) {
+  const normalized = String(code || "").toLowerCase();
+  return { zh: "zh-Hans", "zh-cn": "zh-Hans", "zh-chs": "zh-Hans", cht: "zh-Hant", "zh-tw": "zh-Hant", "zh-cht": "zh-Hant", jp: "ja", kor: "ko", fra: "fr", spa: "es", ara: "ar", vie: "vi", swe: "sv", fin: "fi", heb: "he", may: "ms" }[normalized] || code || null;
+}
+function requireProviderCredentials(config) {
+  const fields = {
+    baidu: [["baiduAppId", "百度 APP ID"], ["baiduSecretKey", "百度密钥"]],
+    alibaba: [["alibabaAccessKeyId", "阿里云 AccessKey ID"], ["alibabaAccessKeySecret", "阿里云 AccessKey Secret"]],
+    youdao: [["youdaoAppId", "有道应用 ID"], ["youdaoAppKey", "有道应用密钥"]]
+  }[config.engine];
+  if (!fields) return;
+  for (const [key, label] of fields) if (!config[key]?.trim()) throw new Error(`请先在设置中填写${label}。`);
 }
 function aborted() {
   const e = new Error("已取消翻译");
@@ -308,6 +406,83 @@ function createTranslator(invoke) {
         }
       }
     }
+    if (config.engine === "baidu") {
+      requireProviderCredentials(config);
+      const source = providerLanguage("baidu", config.source), target = providerLanguage("baidu", config.target);
+      const salt = randomNonce();
+      const sign = [...md5Bytes(`${config.baiduAppId.trim()}${text}${salt}${config.baiduSecretKey.trim()}`)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      const form = new URLSearchParams({ q: text, from: source, to: target, appid: config.baiduAppId.trim(), salt, sign });
+      const data2 = json(await request({
+        method: "POST",
+        url: "https://fanyi-api.baidu.com/api/trans/vip/translate",
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=utf-8" },
+        body: form.toString()
+      }));
+      if (data2.error_code) throw new Error(`百度翻译返回错误（${String(data2.error_code).slice(0, 12)}），请检查 APP ID、密钥、服务权限和语言方向。`);
+      return { text: data2.trans_result?.map((item) => item?.dst || "").join("\n"), detected: canonicalLanguage(data2.from) };
+    }
+    if (config.engine === "alibaba") {
+      requireProviderCredentials(config);
+      const path = "/api/translate/web/general";
+      const body2 = JSON.stringify({
+        FormatType: "text",
+        SourceLanguage: providerLanguage("alibaba", config.source),
+        TargetLanguage: providerLanguage("alibaba", config.target),
+        SourceText: text,
+        Scene: "general"
+      });
+      const contentMd5 = base64(md5Bytes(body2));
+      const nonce = randomNonce();
+      const headers2 = {
+        Accept: "application/json",
+        "Content-MD5": contentMd5,
+        "Content-Type": "application/json;charset=utf-8",
+        Date: (/* @__PURE__ */ new Date()).toUTCString(),
+        "x-acs-signature-method": "HMAC-SHA1",
+        "x-acs-signature-nonce": nonce,
+        "x-acs-version": "2019-01-02"
+      };
+      const stringToSign = `POST
+${headers2.Accept}
+${contentMd5}
+${headers2["Content-Type"]}
+${headers2.Date}
+x-acs-signature-method:HMAC-SHA1
+x-acs-signature-nonce:${nonce}
+x-acs-version:2019-01-02
+${path}`;
+      const signature = await hmacSha1Base64(config.alibabaAccessKeySecret.trim(), stringToSign);
+      headers2.Authorization = `acs ${config.alibabaAccessKeyId.trim()}:${signature}`;
+      const data2 = json(await request({ method: "POST", url: `https://mt.cn-hangzhou.aliyuncs.com${path}`, headers: headers2, body: body2 }));
+      const response = data2.TranslateGeneralResponse || data2;
+      if (String(response.Code) !== "200") throw new Error(`阿里云机器翻译返回错误（${String(response.Code || "未知").slice(0, 12)}），请检查 AccessKey 权限、服务开通状态和语言方向。`);
+      return { text: response.Data?.Translated || "", detected: canonicalLanguage(response.Data?.DetectedLanguage) };
+    }
+    if (config.engine === "youdao") {
+      requireProviderCredentials(config);
+      const salt = randomNonce(), curtime = String(Math.floor(Date.now() / 1e3));
+      const input = text.length <= 20 ? text : `${text.slice(0, 10)}${text.length}${text.slice(-10)}`;
+      const sign = await sha256Hex(`${config.youdaoAppId.trim()}${input}${salt}${curtime}${config.youdaoAppKey.trim()}`);
+      const form = new URLSearchParams({
+        q: text,
+        from: providerLanguage("youdao", config.source),
+        to: providerLanguage("youdao", config.target),
+        appKey: config.youdaoAppId.trim(),
+        salt,
+        sign,
+        signType: "v3",
+        curtime
+      });
+      const data2 = json(await request({
+        method: "POST",
+        url: "https://openapi.youdao.com/api",
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=utf-8" },
+        body: form.toString()
+      }));
+      if (String(data2.errorCode) !== "0") throw new Error(`有道翻译返回错误（${String(data2.errorCode || "未知").slice(0, 12)}），请检查应用 ID、密钥、服务配置和语言方向。`);
+      const detected = String(data2.l || "").split("2")[0];
+      return { text: Array.isArray(data2.translation) ? data2.translation.join("") : "", detected: canonicalLanguage(detected) };
+    }
     if (!config.model.trim()) throw new Error("请先在翻译设置中填写模型名称。");
     const instructions = translationInstructions(config);
     const payload = requestPrompt(config, text);
@@ -369,7 +544,7 @@ function createTranslator(invoke) {
       const config = normalizeSettings(settings);
       if (!text.trim()) return { text: "", detected: null };
       if (isAlreadyInTarget(config, text)) return { text, detected: detectLanguage(text) || null, passthrough: true };
-      const pieces = splitText(text, config.engine === "google" ? 1500 : config.engine === "bing" ? 1e3 : 3500);
+      const pieces = splitText(text, ["bing", "baidu", "youdao"].includes(config.engine) ? 1e3 : config.engine === "google" ? 1500 : 3500);
       const results = [];
       for (const piece of pieces) {
         if (closed || options.isCancelled?.()) throw aborted();
@@ -847,7 +1022,7 @@ function createReplyTranslationController({ document: document2, translator, get
 }
 
 // styles.css
-var styles_default = ".ct-panel,.ct-menu,.ct-settings{--ct-bg:var(--background-primary-default,#fff);--ct-soft:var(--background-secondary-default,#f7f8fa);--ct-line:var(--border-primary,#e5e7eb);--ct-text:var(--text-primary,#253047);--ct-muted:var(--text-tertiary,#88919f);--ct-accent:#527ddc;--ct-accent-soft:color-mix(in srgb,var(--ct-accent) 9%,var(--ct-bg));color:var(--ct-text);font-family:inherit;font-size:13px;line-height:1.6;box-sizing:border-box}\n.dark .ct-panel,.dark .ct-menu,.dark .ct-settings{--ct-bg:var(--background-primary-default,#202126);--ct-soft:var(--background-secondary-default,#282a30);--ct-line:var(--border-primary,#393d46);--ct-text:var(--text-primary,#e3e7ef);--ct-muted:var(--text-tertiary,#939ba9)}\n.ct-overlay{position:fixed;inset:0;pointer-events:none;z-index:10000}.ct-overlay button,.ct-overlay select,.ct-overlay textarea{font:inherit}.ct-overlay button,.ct-settings button{cursor:pointer}.ct-overlay button:disabled,.ct-settings button:disabled{cursor:default;opacity:.5}.ct-overlay :is(button,textarea,select):focus-visible,.ct-settings :is(button,input,select):focus-visible{outline:2px solid var(--ct-accent,#527ddc);outline-offset:3px}.ct-panel{pointer-events:auto;position:absolute;right:14px;bottom:42px;width:min(460px,calc(100vw - 28px));max-height:calc(100dvh - 75px);overflow:auto;background:var(--ct-bg);border:1px solid var(--ct-line);border-radius:16px;box-shadow:0 16px 60px #12233d24,0 2px 8px #12233d0d;animation:ct-appear .15s ease-out}\n.ct-header{display:flex;align-items:center;justify-content:space-between;padding:16px 17px 12px}.ct-brand{display:flex;gap:9px;align-items:center;font-size:15px;font-weight:600}.ct-brand-icon{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;background:var(--ct-accent-soft);color:var(--ct-accent);border-radius:9px}.ct-tag{margin-left:2px;font-size:9px;letter-spacing:1.5px;font-weight:500;color:var(--ct-muted)}.ct-row{display:inline-flex;gap:7px;align-items:center}.ct-icon-btn{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:28px;height:28px;border:0;border-radius:7px;color:var(--ct-muted);background:transparent;padding:5px}.ct-icon-btn:hover{color:var(--ct-text);background:var(--ct-soft)}\n.ct-language-row{display:grid;grid-template-columns:minmax(0,1fr) 32px minmax(0,1fr);align-items:center;gap:15px;margin:0 18px 15px;padding:8px 12px;background:var(--ct-soft);border:1px solid var(--ct-line);border-radius:10px}.ct-language{background:transparent;border:0;color:var(--ct-text);padding:4px 3px;width:100%;min-width:0;cursor:pointer;font:inherit}.ct-language option{background:var(--ct-bg);color:var(--ct-text)}.ct-swap{color:var(--ct-text);background:var(--ct-bg);width:30px;height:28px;border:1px solid var(--ct-line)}.ct-swap:hover{color:var(--ct-accent);background:var(--ct-accent-soft)}\n.ct-input-wrap{position:relative;padding:0 19px 15px}.ct-section-caption{display:flex;justify-content:space-between;align-items:center;min-height:26px;color:var(--ct-muted);font-size:11px;margin-bottom:5px}.ct-input{width:100%;min-height:112px;max-height:30vh;resize:vertical;background:transparent;border:0;color:var(--ct-text);line-height:1.75;padding:0 0 15px;outline-offset:5px!important;box-sizing:border-box;font-size:14px!important}.ct-input::placeholder{color:var(--ct-muted)}.ct-clear{position:absolute;right:18px;bottom:9px;padding:1px 5px;border:0;background:transparent;color:var(--ct-muted);font-size:11px!important}.ct-clear:hover{color:var(--ct-accent)}.ct-output-wrap{padding:11px 19px 16px;min-height:170px;border-top:1px solid var(--ct-line);background:linear-gradient(var(--ct-accent-soft),transparent)}.ct-output{min-height:112px;max-height:32vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.85;font-size:14px;user-select:text}.ct-output-empty{display:flex;align-items:center;justify-content:center}.ct-empty{display:flex;flex-direction:column;align-items:center;gap:9px;font-size:12px;color:var(--ct-muted);padding:14px}.ct-empty svg{opacity:.55}.ct-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 18px;border-top:1px solid var(--ct-line);font-size:10px}.ct-engine{display:flex;align-items:center;gap:6px}.ct-dot{width:5px;height:5px;border-radius:50%;background:#75ab86}.ct-footer-sep{margin:0 7px;opacity:.4}.ct-muted{color:var(--ct-muted)}\n/* 状态栏入口排在右侧内置集群（性能 / 缩放 / 同步）最前：宿主只提供“末位槽 + 左侧整段”两处，故用 flex order 前移，并隐藏随之落在“已同步”之后的分隔点。 */\n.ct-status{order:-1;display:inline-flex;gap:5px;align-items:center;background:transparent;border:0;border-radius:5px;padding:2px 7px;color:inherit;font:inherit;font-size:11px;cursor:pointer}span:has(+ .ct-status){display:none}.ct-status:hover,.ct-status.ct-active{background:#527ddc16;color:#527ddc}.ct-text-btn{display:inline-flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--ct-accent);padding:4px 5px;border-radius:5px;font:inherit;font-size:12px}.ct-text-btn:hover{background:var(--ct-accent-soft)}.ct-error-text{color:var(--text-error-primary,#c05050);font-size:12px}.ct-alert{margin:0 17px 12px;padding:9px 12px;background:var(--ct-soft);border:1px solid var(--ct-line);border-radius:8px;color:var(--text-error-primary,#c05050);font-size:12px}.ct-spinner{width:13px;height:13px;border:1.5px solid var(--ct-line);border-top-color:var(--ct-accent);border-radius:50%;animation:ct-spin .8s linear infinite}\n\n.ct-menu{position:fixed;width:198px;background:var(--ct-bg);border:1px solid var(--ct-line);padding:5px;border-radius:10px;box-shadow:0 8px 30px #12233d24;pointer-events:auto;z-index:1}.ct-menu-item{display:flex;width:100%;gap:9px;align-items:center;text-align:left;background:transparent;border:0;color:var(--ct-text);border-radius:6px;padding:8px 10px;font-size:12px}.ct-menu-item:hover,.ct-menu-item:focus-visible{background:var(--ct-soft)}.ct-menu-item svg{color:var(--ct-muted)}.ct-menu-divider{height:1px;background:var(--ct-line);margin:4px}\n.ct-inline-translation{box-sizing:border-box;margin:10px 0 6px;padding:9px 13px;border-left:2px solid #7899da;border-radius:0 7px 7px 0;background:#527ddc0b;color:var(--text-primary,inherit);font-family:inherit;font-size:13px;line-height:1.8;max-width:100%;min-width:0;text-align:left}.ct-inline-label{font-size:10px;letter-spacing:.1em;color:#7890b6;margin-bottom:3px}.ct-inline-body{white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}\n.ct-settings{max-width:720px;padding:22px 24px 40px;margin:0 auto}.ct-settings-title{display:flex;align-items:center;gap:13px;margin-bottom:28px}.ct-brand-icon-large{width:46px;height:46px;border-radius:13px}.ct-settings h2{font-size:21px;line-height:1.3;letter-spacing:.02em;font-weight:600;margin:0 0 4px}.ct-settings-title p{margin:0;font-size:12px}.ct-settings-card{padding:20px 22px;margin-bottom:16px;border:1px solid var(--ct-line);border-radius:13px;background:var(--ct-bg)}.ct-settings h3{font-size:14px;font-weight:600;margin:0 0 13px}.ct-help{font-size:12px;color:var(--ct-muted);margin:6px 0 0;line-height:1.7}.ct-settings-languages{display:grid;grid-template-columns:1fr 24px 1fr;align-items:end;gap:18px;margin-top:18px}.ct-settings-languages>svg{align-self:end;margin-bottom:12px;color:var(--ct-muted)}.ct-field{min-width:0}.ct-field-label{display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--ct-text)}.ct-settings .ct-language,.ct-setting-input{display:block;box-sizing:border-box;width:100%;height:39px;padding:8px 11px;background:var(--ct-soft);border:1px solid var(--ct-line);border-radius:7px;color:var(--ct-text);font:inherit;font-size:13px}.ct-engine-options{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.ct-engine-option{position:relative;display:flex;flex-direction:column;gap:5px;padding:14px 12px;border:1px solid var(--ct-line);border-radius:9px;cursor:pointer}.ct-engine-option input{position:absolute;right:10px;top:12px;accent-color:var(--ct-accent);width:12px;height:12px}.ct-engine-option strong{font-size:13px;font-weight:500;padding-right:14px}.ct-engine-option span{font-size:10px;color:var(--ct-muted)}.ct-engine-option.ct-selected{border-color:var(--ct-accent);background:var(--ct-accent-soft)}.ct-engine-help{margin-top:14px}.ct-ai-fields{display:grid;gap:16px;margin-top:21px;padding-top:20px;border-top:1px solid var(--ct-line)}.ct-key-field{display:flex;align-items:end;gap:8px}.ct-key-field .ct-field{flex:1}.ct-key-field>.ct-text-btn{height:39px;min-width:42px}.ct-settings-actions{display:flex;gap:10px;margin-top:24px}.ct-primary-btn,.ct-secondary-btn{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:7px 18px;border:1px solid transparent;border-radius:8px;font:inherit;font-size:12px}.ct-primary-btn{background:var(--ct-accent);color:white}.ct-primary-btn:hover{filter:brightness(1.06)}.ct-secondary-btn{background:var(--ct-bg);border-color:var(--ct-line);color:var(--ct-text)}.ct-settings-notice{padding:10px 13px;background:var(--ct-soft);border-radius:7px;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}.ct-settings-note{margin-top:18px}\n.ct-model-field{display:grid;gap:7px}.ct-model-heading{display:flex;align-items:center;justify-content:space-between}.ct-model-heading .ct-field-label{display:block}.ct-model-heading .ct-text-btn{margin-right:-5px}.ct-model-combo{position:relative}.ct-model-options{position:absolute;z-index:3;top:calc(100% + 4px);left:0;right:0;max-height:196px;overflow:auto;margin:0;padding:4px;list-style:none;background:var(--ct-bg);border:1px solid var(--ct-line);border-radius:8px;box-shadow:0 10px 30px #12233d26}.ct-model-option{padding:7px 9px;border-radius:5px;font-size:12px;color:var(--ct-text);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ct-model-option:hover,.ct-model-option.ct-active{background:var(--ct-accent-soft);color:var(--ct-accent)}.ct-model-option[aria-selected=true]{font-weight:600}.ct-model-status{margin:0}\n@keyframes ct-spin{to{transform:rotate(360deg)}}@keyframes ct-appear{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}@media(prefers-reduced-motion:reduce){.ct-panel,.ct-spinner{animation:none}}@media(max-width:480px){.ct-settings{padding:14px 12px}.ct-settings-card{padding:16px 13px}.ct-engine-options{gap:6px}.ct-engine-option{padding:12px 8px}.ct-tag{display:none}.ct-footer{font-size:9px}.ct-settings-languages{gap:8px}}\n\n.ct-reply-translate-btn{display:inline-flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;padding:0;color:var(--foreground-icon-secondary,var(--text-tertiary,#88919f));background:transparent;border:0;border-radius:6px;cursor:pointer}.ct-reply-translate-btn:hover{color:var(--foreground-icon-primary,var(--text-primary,#253047));background:var(--background-tertiary-hover,#527ddc14)}.ct-reply-translate-btn[aria-expanded=true]{color:#527ddc;background:#527ddc14}.ct-reply-translate-btn:focus-visible{outline:2px solid #527ddc;outline-offset:1px}.ct-reply-translate-btn:disabled{cursor:wait;opacity:.5}.ct-reply-translate-btn[hidden]{display:none!important}\n.ct-inline-error{border-left-color:#c05050;background:#c050500a}.ct-reply-cancel{margin-top:4px}\n.ct-panel-hint{padding:0 18px 12px;color:var(--ct-muted);font-size:10px;text-align:right}\n\n.ct-passthrough{padding:0 0 2px;text-align:left;color:var(--ct-accent)}\n";
+var styles_default = ".ct-panel,.ct-menu,.ct-settings{--ct-bg:var(--background-primary-default,#fff);--ct-soft:var(--background-secondary-default,#f7f8fa);--ct-line:var(--border-primary,#e5e7eb);--ct-text:var(--text-primary,#253047);--ct-muted:var(--text-tertiary,#88919f);--ct-accent:#527ddc;--ct-accent-soft:color-mix(in srgb,var(--ct-accent) 9%,var(--ct-bg));color:var(--ct-text);font-family:inherit;font-size:13px;line-height:1.6;box-sizing:border-box}\n.dark .ct-panel,.dark .ct-menu,.dark .ct-settings{--ct-bg:var(--background-primary-default,#202126);--ct-soft:var(--background-secondary-default,#282a30);--ct-line:var(--border-primary,#393d46);--ct-text:var(--text-primary,#e3e7ef);--ct-muted:var(--text-tertiary,#939ba9)}\n.ct-overlay{position:fixed;inset:0;pointer-events:none;z-index:10000}.ct-overlay button,.ct-overlay select,.ct-overlay textarea{font:inherit}.ct-overlay button,.ct-settings button{cursor:pointer}.ct-overlay button:disabled,.ct-settings button:disabled{cursor:default;opacity:.5}.ct-overlay :is(button,textarea,select):focus-visible,.ct-settings :is(button,input,select):focus-visible{outline:2px solid var(--ct-accent,#527ddc);outline-offset:3px}.ct-panel{pointer-events:auto;position:absolute;right:14px;bottom:42px;width:min(460px,calc(100vw - 28px));max-height:calc(100dvh - 75px);overflow:auto;background:var(--ct-bg);border:1px solid var(--ct-line);border-radius:16px;box-shadow:0 16px 60px #12233d24,0 2px 8px #12233d0d;animation:ct-appear .15s ease-out}\n.ct-header{display:flex;align-items:center;justify-content:space-between;padding:16px 17px 12px}.ct-brand{display:flex;gap:9px;align-items:center;font-size:15px;font-weight:600}.ct-brand-icon{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;background:var(--ct-accent-soft);color:var(--ct-accent);border-radius:9px}.ct-tag{margin-left:2px;font-size:9px;letter-spacing:1.5px;font-weight:500;color:var(--ct-muted)}.ct-row{display:inline-flex;gap:7px;align-items:center}.ct-icon-btn{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:28px;height:28px;border:0;border-radius:7px;color:var(--ct-muted);background:transparent;padding:5px}.ct-icon-btn:hover{color:var(--ct-text);background:var(--ct-soft)}\n.ct-language-row{display:grid;grid-template-columns:minmax(0,1fr) 32px minmax(0,1fr);align-items:center;gap:15px;margin:0 18px 15px;padding:8px 12px;background:var(--ct-soft);border:1px solid var(--ct-line);border-radius:10px}.ct-language{background:transparent;border:0;color:var(--ct-text);padding:4px 3px;width:100%;min-width:0;cursor:pointer;font:inherit}.ct-language option{background:var(--ct-bg);color:var(--ct-text)}.ct-swap{color:var(--ct-text);background:var(--ct-bg);width:30px;height:28px;border:1px solid var(--ct-line)}.ct-swap:hover{color:var(--ct-accent);background:var(--ct-accent-soft)}\n.ct-input-wrap{position:relative;padding:0 19px 15px}.ct-section-caption{display:flex;justify-content:space-between;align-items:center;min-height:26px;color:var(--ct-muted);font-size:11px;margin-bottom:5px}.ct-input{width:100%;min-height:112px;max-height:30vh;resize:vertical;background:transparent;border:0;color:var(--ct-text);line-height:1.75;padding:0 0 15px;outline-offset:5px!important;box-sizing:border-box;font-size:14px!important}.ct-input::placeholder{color:var(--ct-muted)}.ct-clear{position:absolute;right:18px;bottom:9px;padding:1px 5px;border:0;background:transparent;color:var(--ct-muted);font-size:11px!important}.ct-clear:hover{color:var(--ct-accent)}.ct-output-wrap{padding:11px 19px 16px;min-height:170px;border-top:1px solid var(--ct-line);background:linear-gradient(var(--ct-accent-soft),transparent)}.ct-output{min-height:112px;max-height:32vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.85;font-size:14px;user-select:text}.ct-output-empty{display:flex;align-items:center;justify-content:center}.ct-empty{display:flex;flex-direction:column;align-items:center;gap:9px;font-size:12px;color:var(--ct-muted);padding:14px}.ct-empty svg{opacity:.55}.ct-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 18px;border-top:1px solid var(--ct-line);font-size:10px}.ct-engine{display:flex;align-items:center;gap:6px}.ct-dot{width:5px;height:5px;border-radius:50%;background:#75ab86}.ct-footer-sep{margin:0 7px;opacity:.4}.ct-muted{color:var(--ct-muted)}\n/* 状态栏入口排在右侧内置集群（性能 / 缩放 / 同步）最前：宿主只提供“末位槽 + 左侧整段”两处，故用 flex order 前移，并隐藏随之落在“已同步”之后的分隔点。 */\n.ct-status{order:-1;display:inline-flex;gap:5px;align-items:center;background:transparent;border:0;border-radius:5px;padding:2px 7px;color:inherit;font:inherit;font-size:11px;cursor:pointer}span:has(+ .ct-status){display:none}.ct-status:hover,.ct-status.ct-active{background:#527ddc16;color:#527ddc}.ct-text-btn{display:inline-flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--ct-accent);padding:4px 5px;border-radius:5px;font:inherit;font-size:12px}.ct-text-btn:hover{background:var(--ct-accent-soft)}.ct-error-text{color:var(--text-error-primary,#c05050);font-size:12px}.ct-alert{margin:0 17px 12px;padding:9px 12px;background:var(--ct-soft);border:1px solid var(--ct-line);border-radius:8px;color:var(--text-error-primary,#c05050);font-size:12px}.ct-spinner{width:13px;height:13px;border:1.5px solid var(--ct-line);border-top-color:var(--ct-accent);border-radius:50%;animation:ct-spin .8s linear infinite}\n\n.ct-menu{position:fixed;width:198px;background:var(--ct-bg);border:1px solid var(--ct-line);padding:5px;border-radius:10px;box-shadow:0 8px 30px #12233d24;pointer-events:auto;z-index:1}.ct-menu-item{display:flex;width:100%;gap:9px;align-items:center;text-align:left;background:transparent;border:0;color:var(--ct-text);border-radius:6px;padding:8px 10px;font-size:12px}.ct-menu-item:hover,.ct-menu-item:focus-visible{background:var(--ct-soft)}.ct-menu-item svg{color:var(--ct-muted)}.ct-menu-divider{height:1px;background:var(--ct-line);margin:4px}\n.ct-inline-translation{box-sizing:border-box;margin:10px 0 6px;padding:9px 13px;border-left:2px solid #7899da;border-radius:0 7px 7px 0;background:#527ddc0b;color:var(--text-primary,inherit);font-family:inherit;font-size:13px;line-height:1.8;max-width:100%;min-width:0;text-align:left}.ct-inline-label{font-size:10px;letter-spacing:.1em;color:#7890b6;margin-bottom:3px}.ct-inline-body{white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}\n.ct-settings{max-width:720px;padding:22px 24px 40px;margin:0 auto}.ct-settings-title{display:flex;align-items:center;gap:13px;margin-bottom:28px}.ct-brand-icon-large{width:46px;height:46px;border-radius:13px}.ct-settings h2{font-size:21px;line-height:1.3;letter-spacing:.02em;font-weight:600;margin:0 0 4px}.ct-settings-title p{margin:0;font-size:12px}.ct-settings-card{padding:20px 22px;margin-bottom:16px;border:1px solid var(--ct-line);border-radius:13px;background:var(--ct-bg)}.ct-settings h3{font-size:14px;font-weight:600;margin:0 0 13px}.ct-help{font-size:12px;color:var(--ct-muted);margin:6px 0 0;line-height:1.7}.ct-settings-languages{display:grid;grid-template-columns:1fr 24px 1fr;align-items:end;gap:18px;margin-top:18px}.ct-settings-languages>svg{align-self:end;margin-bottom:12px;color:var(--ct-muted)}.ct-field{min-width:0}.ct-field-label{display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--ct-text)}.ct-settings .ct-language,.ct-setting-input{display:block;box-sizing:border-box;width:100%;height:39px;padding:8px 11px;background:var(--ct-soft);border:1px solid var(--ct-line);border-radius:7px;color:var(--ct-text);font:inherit;font-size:13px}.ct-engine-options{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.ct-engine-option{position:relative;display:flex;flex-direction:column;gap:5px;padding:14px 12px;border:1px solid var(--ct-line);border-radius:9px;cursor:pointer}.ct-engine-option input{position:absolute;right:10px;top:12px;accent-color:var(--ct-accent);width:12px;height:12px}.ct-engine-option strong{font-size:13px;font-weight:500;padding-right:14px}.ct-engine-option span{font-size:10px;color:var(--ct-muted)}.ct-engine-option.ct-selected{border-color:var(--ct-accent);background:var(--ct-accent-soft)}.ct-engine-help{margin-top:14px}.ct-provider-fields{display:grid;gap:13px;margin-top:20px;padding-top:18px;border-top:1px solid var(--ct-line)}.ct-provider-fields h4{margin:0;font-size:13px;font-weight:600}.ct-provider-fields ol{margin:0;padding-left:20px;color:var(--ct-muted);font-size:12px;line-height:1.8}.ct-provider-fields a{color:var(--ct-accent);text-decoration:underline;text-underline-offset:2px}.ct-provider-fields-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.ct-ai-fields{display:grid;gap:16px;margin-top:21px;padding-top:20px;border-top:1px solid var(--ct-line)}.ct-key-field{display:flex;align-items:end;gap:8px}.ct-key-field .ct-field{flex:1}.ct-key-field>.ct-text-btn{height:39px;min-width:42px}.ct-settings-actions{display:flex;gap:10px;margin-top:24px}.ct-primary-btn,.ct-secondary-btn{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:7px 18px;border:1px solid transparent;border-radius:8px;font:inherit;font-size:12px}.ct-primary-btn{background:var(--ct-accent);color:white}.ct-primary-btn:hover{filter:brightness(1.06)}.ct-secondary-btn{background:var(--ct-bg);border-color:var(--ct-line);color:var(--ct-text)}.ct-settings-notice{padding:10px 13px;background:var(--ct-soft);border-radius:7px;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}.ct-settings-note{margin-top:18px}\n.ct-model-field{display:grid;gap:7px}.ct-model-heading{display:flex;align-items:center;justify-content:space-between}.ct-model-heading .ct-field-label{display:block}.ct-model-heading .ct-text-btn{margin-right:-5px}.ct-model-combo{position:relative}.ct-model-options{position:absolute;z-index:3;top:calc(100% + 4px);left:0;right:0;max-height:196px;overflow:auto;margin:0;padding:4px;list-style:none;background:var(--ct-bg);border:1px solid var(--ct-line);border-radius:8px;box-shadow:0 10px 30px #12233d26}.ct-model-option{padding:7px 9px;border-radius:5px;font-size:12px;color:var(--ct-text);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ct-model-option:hover,.ct-model-option.ct-active{background:var(--ct-accent-soft);color:var(--ct-accent)}.ct-model-option[aria-selected=true]{font-weight:600}.ct-model-status{margin:0}\n@keyframes ct-spin{to{transform:rotate(360deg)}}@keyframes ct-appear{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}@media(prefers-reduced-motion:reduce){.ct-panel,.ct-spinner{animation:none}}@media(max-width:480px){.ct-settings{padding:14px 12px}.ct-settings-card{padding:16px 13px}.ct-engine-options{gap:6px}.ct-engine-option{padding:12px 8px}.ct-provider-fields-grid{grid-template-columns:1fr}.ct-tag{display:none}.ct-footer{font-size:9px}.ct-settings-languages{gap:8px}}\n\n.ct-reply-translate-btn{display:inline-flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;padding:0;color:var(--foreground-icon-secondary,var(--text-tertiary,#88919f));background:transparent;border:0;border-radius:6px;cursor:pointer}.ct-reply-translate-btn:hover{color:var(--foreground-icon-primary,var(--text-primary,#253047));background:var(--background-tertiary-hover,#527ddc14)}.ct-reply-translate-btn[aria-expanded=true]{color:#527ddc;background:#527ddc14}.ct-reply-translate-btn:focus-visible{outline:2px solid #527ddc;outline-offset:1px}.ct-reply-translate-btn:disabled{cursor:wait;opacity:.5}.ct-reply-translate-btn[hidden]{display:none!important}\n.ct-inline-error{border-left-color:#c05050;background:#c050500a}.ct-reply-cancel{margin-top:4px}\n.ct-panel-hint{padding:0 18px 12px;color:var(--ct-muted);font-size:10px;text-align:right}\n\n.ct-passthrough{padding:0 0 2px;text-align:left;color:var(--ct-accent)}\n";
 
 // src/main.js
 function activate(ctx) {
@@ -1015,7 +1190,15 @@ function activate(ctx) {
       if (form.engine === "ai") {
         aiEndpoint(form.baseUrl, form.protocol);
         if (!form.model.trim()) throw new Error("请填写模型名称。");
+        return;
       }
+      const fields = {
+        baidu: [["baiduAppId", "百度 APP ID"], ["baiduSecretKey", "百度密钥"]],
+        alibaba: [["alibabaAccessKeyId", "阿里云 AccessKey ID"], ["alibabaAccessKeySecret", "阿里云 AccessKey Secret"]],
+        youdao: [["youdaoAppId", "有道应用 ID"], ["youdaoAppKey", "有道应用密钥"]]
+      }[form.engine] || [];
+      const missing = fields.find(([key]) => !form[key]?.trim());
+      if (missing) throw new Error(`请填写${missing[1]}。`);
     }
     async function save() {
       try {
@@ -1038,7 +1221,9 @@ function activate(ctx) {
         validate();
         setBusy(true);
         setNotice("正在测试…");
-        const result = await translator.translate("Hello, world!", form, { isCancelled: () => !alive.current });
+        translator.clear();
+        const probe = { ...form, source: "en", target: form.target === "en" ? "zh-Hans" : form.target };
+        const result = await translator.translate("Hello, world!", probe, { isCancelled: () => !alive.current });
         if (alive.current) setNotice(`连接成功：${result.text}`);
       } catch (error) {
         if (alive.current && error.name !== "AbortError") setNotice(error.message);
@@ -1098,6 +1283,52 @@ function activate(ctx) {
     }
     const field = (label, content, help) => h("div", { className: "ct-field" }, h("label", { className: "ct-field-label" }, label, content), help && h("p", { className: "ct-help" }, help));
     const textInput = (label, key, props = {}) => field(label, h("input", { className: "ct-setting-input", value: form[key], onChange: (e) => change(key, e.target.value), autoComplete: "off", spellCheck: false, ...props }));
+    const secretInput = (label, key, placeholder) => textInput(label, key, { type: "password", placeholder, autoComplete: "new-password" });
+    const externalLink = (href, label) => h("a", { href, target: "_blank", rel: "noreferrer" }, label);
+    const providerFields = form.engine === "baidu" && h(
+      "div",
+      { className: "ct-provider-fields" },
+      h("h4", null, "申请百度翻译 API"),
+      h(
+        "ol",
+        null,
+        h("li", null, externalLink("https://fanyi-api.baidu.com/manage/developer", "打开百度翻译开放平台开发者管理"), "，登录并完成开发者注册。"),
+        h("li", null, "在控制台开通通用翻译 API 并创建应用。"),
+        h("li", null, "进入开发者信息，复制 APP ID 和密钥，分别填入下方字段。")
+      ),
+      h("div", { className: "ct-provider-fields-grid" }, textInput("百度 APP ID", "baiduAppId", { placeholder: "申请后获得的 APP ID" }), secretInput("百度密钥", "baiduSecretKey", "申请后获得的密钥")),
+      h("p", { className: "ct-help" }, "插件使用百度通用翻译接口。凭证保存在本机插件存储中，非加密保险库。")
+    );
+    const alibabaFields = form.engine === "alibaba" && h(
+      "div",
+      { className: "ct-provider-fields" },
+      h("h4", null, "申请阿里云机器翻译"),
+      h(
+        "ol",
+        null,
+        h("li", null, externalLink("https://www.aliyun.com/product/ai/alimt", "打开阿里云机器翻译产品页"), "，在控制台开通机器翻译通用版。"),
+        h("li", null, externalLink("https://ram.console.aliyun.com/users", "进入 RAM 用户管理"), "，创建用于插件的 RAM 用户并开启 OpenAPI 调用访问，只授予机器翻译 TranslateGeneral 所需权限。"),
+        h("li", null, externalLink("https://ram.console.aliyun.com/manage/ak", "打开 AccessKey 管理"), "，为该 RAM 用户创建 AccessKey，复制 AccessKey ID 和 AccessKey Secret。"),
+        h("li", null, "将 ID 和 Secret 分别填入下方字段。")
+      ),
+      h("div", { className: "ct-provider-fields-grid" }, textInput("阿里云 AccessKey ID", "alibabaAccessKeyId", { placeholder: "RAM 用户的 AccessKey ID" }), secretInput("阿里云 AccessKey Secret", "alibabaAccessKeySecret", "RAM 用户的 AccessKey Secret")),
+      h("p", { className: "ct-help" }, "接口调用使用阿里云机器翻译 REST API，签名在本机生成；AccessKey 凭证保存在本机插件存储中，非加密保险库。")
+    );
+    const youdaoFields = form.engine === "youdao" && h(
+      "div",
+      { className: "ct-provider-fields" },
+      h("h4", null, "申请有道智云文本翻译"),
+      h(
+        "ol",
+        null,
+        h("li", null, externalLink("https://ai.youdao.com/", "打开有道智云 AI 开放平台"), "，注册并登录开发者账号。"),
+        h("li", null, externalLink("https://ai.youdao.com/console/", "前往控制台"), "。"),
+        h("li", null, "进入应用管理创建应用，选择自然语言翻译中的文本翻译服务和 API 接入方式。"),
+        h("li", null, "在应用总览中复制应用 ID（APP Key）和应用密钥（APP Secret），分别填入下方字段。")
+      ),
+      h("div", { className: "ct-provider-fields-grid" }, textInput("有道应用 ID（APP Key）", "youdaoAppId", { placeholder: "应用总览中的 APP Key" }), secretInput("有道应用密钥（APP Secret）", "youdaoAppKey", "应用总览中的 APP Secret")),
+      h("p", { className: "ct-help" }, "签名按有道文本翻译 API v3 规则在本机生成；凭证保存在本机插件存储中，非加密保险库。")
+    );
     return h(
       "div",
       { className: "ct-settings", "data-ct-ui": "" },
@@ -1113,8 +1344,11 @@ function activate(ctx) {
         "section",
         { className: "ct-settings-card" },
         h("h3", null, "翻译引擎"),
-        h("div", { className: "ct-engine-options", role: "radiogroup", "aria-label": "翻译引擎" }, [["bing", "Bing", "必应翻译"], ["google", "Google", "谷歌翻译"], ["ai", "自定义 AI", "连接你的模型"]].map(([id, name, description]) => h("label", { key: id, className: `ct-engine-option${form.engine === id ? " ct-selected" : ""}` }, h("input", { type: "radio", name: "ct-engine", value: id, checked: form.engine === id, onChange: () => change("engine", id) }), h("strong", null, name), h("span", null, description)))),
-        form.engine !== "ai" && h("p", { className: "ct-help ct-engine-help" }, "使用网页翻译接口，无需 API Key。可用性取决于网络和服务限制；Google 需要可访问其翻译服务的网络。"),
+        h("div", { className: "ct-engine-options", role: "radiogroup", "aria-label": "翻译引擎" }, [["bing", "Bing", "必应翻译"], ["google", "Google", "谷歌翻译"], ["baidu", "百度翻译", "配置 APP ID 和密钥"], ["alibaba", "阿里云翻译", "配置 AccessKey"], ["youdao", "有道翻译", "配置应用 ID 和密钥"], ["ai", "自定义 AI", "连接你的模型"]].map(([id, name, description]) => h("label", { key: id, className: `ct-engine-option${form.engine === id ? " ct-selected" : ""}` }, h("input", { type: "radio", name: "ct-engine", value: id, checked: form.engine === id, onChange: () => change("engine", id) }), h("strong", null, name), h("span", null, description)))),
+        ["bing", "google"].includes(form.engine) && h("p", { className: "ct-help ct-engine-help" }, "使用网页翻译接口，无需 API Key。可用性取决于网络和服务限制；Google 需要可访问其翻译服务的网络。"),
+        providerFields,
+        alibabaFields,
+        youdaoFields,
         form.engine === "ai" && h(
           "div",
           { className: "ct-ai-fields" },

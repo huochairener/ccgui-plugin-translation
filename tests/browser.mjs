@@ -70,13 +70,57 @@ try {
   await page.getByRole('status').filter({ hasText: '连接成功' }).waitFor();
   await page.getByRole('button', { name: '保存设置' }).click();
   await page.getByRole('status').filter({ hasText: '设置已保存' }).waitFor();
+  const configuredProviders = [
+    { id: 'baidu', fields: [['百度 APP ID', 'test-baidu-id'], ['百度密钥', 'test-baidu-secret']], heading: '申请百度翻译 API', link: 'https://fanyi-api.baidu.com/manage/developer' },
+    { id: 'alibaba', fields: [['阿里云 AccessKey ID', 'test-aliyun-id'], ['阿里云 AccessKey Secret', 'test-aliyun-secret']], heading: '申请阿里云机器翻译', link: 'https://www.aliyun.com/product/ai/alimt' },
+    { id: 'youdao', fields: [['有道应用 ID（APP Key）', 'test-youdao-id'], ['有道应用密钥（APP Secret）', 'test-youdao-secret']], heading: '申请有道智云文本翻译', link: 'https://ai.youdao.com/' },
+  ];
+  await page.getByLabel('默认源语言').selectOption('en');
+  await page.getByLabel('默认目标语言').selectOption('en');
+  for (const provider of configuredProviders) {
+    await page.locator(`input[type="radio"][value="${provider.id}"]`).check();
+    await page.getByRole('heading', { name: provider.heading }).waitFor();
+    assert.ok(await page.locator(`a[href="${provider.link}"]`).count(), `${provider.id} settings should show its application portal`);
+    for (const [label, value] of provider.fields) await page.getByLabel(label, { exact: true }).fill(value);
+    await page.getByRole('button', { name: '测试连接' }).click();
+    await page.getByRole('status').filter({ hasText: '连接成功' }).waitFor();
+    assert.ok(await page.evaluate(id => window.testState.requests.some(request => {
+      if (id === 'baidu') return request.url.includes('fanyi-api.baidu.com') && request.headers['Content-Type'].startsWith('application/x-www-form-urlencoded') && new URLSearchParams(request.body).get('appid') === 'test-baidu-id';
+      if (id === 'alibaba') return request.url.includes('mt.cn-hangzhou.aliyuncs.com') && request.headers.Authorization.startsWith('acs test-aliyun-id:');
+      return request.url.includes('openapi.youdao.com') && request.headers['Content-Type'].startsWith('application/x-www-form-urlencoded') && new URLSearchParams(request.body).get('appKey') === 'test-youdao-id';
+    }), provider.id), `${provider.id} should call its provider endpoint using its configured credentials`);
+    const requestCount = await page.evaluate(() => window.testState.requests.length);
+    await page.getByRole('button', { name: '测试连接' }).click();
+    await page.getByRole('status').filter({ hasText: '连接成功' }).waitFor();
+    assert.equal(await page.evaluate(() => window.testState.requests.length), requestCount + 1, 'testing a connection again must send a fresh request');
+    await page.getByRole('button', { name: '保存设置' }).click();
+    await page.getByRole('status').filter({ hasText: '设置已保存' }).waitFor();
+  }
+  assert.deepEqual(await page.evaluate(() => ({
+    engine: window.testState.saved.engine,
+    baiduAppId: window.testState.saved.baiduAppId,
+    baiduSecretKey: window.testState.saved.baiduSecretKey,
+    alibabaAccessKeyId: window.testState.saved.alibabaAccessKeyId,
+    alibabaAccessKeySecret: window.testState.saved.alibabaAccessKeySecret,
+    youdaoAppId: window.testState.saved.youdaoAppId,
+    youdaoAppKey: window.testState.saved.youdaoAppKey,
+  })), {
+    engine: 'youdao', baiduAppId: 'test-baidu-id', baiduSecretKey: 'test-baidu-secret',
+    alibabaAccessKeyId: 'test-aliyun-id', alibabaAccessKeySecret: 'test-aliyun-secret',
+    youdaoAppId: 'test-youdao-id', youdaoAppKey: 'test-youdao-secret',
+  });
+  await page.getByLabel('默认源语言').selectOption('auto');
+  await page.getByLabel('默认目标语言').selectOption('zh-Hans');
   await page.setViewportSize({ width: 1280, height: 1100 });
   await page.locator('#settings').evaluate(element => { element.scrollTop = 0; });
   await page.screenshot({ path: 'artifacts/settings-light.png', animations: 'disabled' });
   await page.setViewportSize({ width: 1280, height: 900 });
+  await page.locator('input[type="radio"][value="ai"]').check();
   await page.getByLabel('API 协议').selectOption('chat');
   await page.getByRole('button', { name: '测试连接' }).click();
   await page.getByRole('status').filter({ hasText: '连接成功' }).waitFor();
+  await page.getByRole('button', { name: '保存设置' }).click();
+  await page.getByRole('status').filter({ hasText: '设置已保存' }).waitFor();
   await page.evaluate(() => { document.getElementById('settings').hidden = true; document.getElementById('chat').hidden = false; });
   await page.locator('#selection-text').evaluate(element => { const range = document.createRange(); range.selectNodeContents(element); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); });
   await page.locator('#selection-text').click({ button: 'right' });

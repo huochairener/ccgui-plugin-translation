@@ -1,9 +1,139 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash, createHmac } from 'node:crypto';
 
 // External services are replaced at the SDK bridge boundary; production parsing,
 // request construction, chunking and scheduling run unchanged.
 import * as core from '../src/core.js';
+
+test('provider settings preserve credentials and accept the three account-backed engines', () => {
+  const config = core.normalizeSettings({
+    engine: 'baidu', baiduAppId: 'baidu-id', baiduSecretKey: 'baidu-secret',
+    alibabaAccessKeyId: 'aliyun-id', alibabaAccessKeySecret: 'aliyun-secret',
+    youdaoAppId: 'youdao-id', youdaoAppKey: 'youdao-secret',
+  });
+  assert.equal(config.engine, 'baidu');
+  assert.equal(config.baiduAppId, 'baidu-id');
+  assert.equal(config.baiduSecretKey, 'baidu-secret');
+  assert.equal(core.normalizeSettings({ engine: 'alibaba' }).engine, 'alibaba');
+  assert.equal(core.normalizeSettings({ engine: 'youdao' }).engine, 'youdao');
+  assert.equal(core.engineName('baidu'), '百度翻译');
+  assert.equal(core.engineName('alibaba'), '阿里云翻译');
+  assert.equal(core.engineName('youdao'), '有道翻译');
+});
+
+test('Baidu translation sends the official signed form request and reads its result', async () => {
+  let request;
+  const translator = core.createTranslator(async (_, args) => {
+    request = args;
+    return { status: 200, body: JSON.stringify({ from: 'en', to: 'zh', trans_result: [{ src: 'Hello world', dst: '你好，世界' }] }) };
+  });
+  const result = await translator.translate('Hello world', {
+    engine: 'baidu', source: 'en', target: 'zh-Hans', baiduAppId: 'baidu-id', baiduSecretKey: 'baidu-secret',
+  });
+  const form = new URLSearchParams(request.body);
+  const salt = form.get('salt');
+  assert.equal(result.text, '你好，世界');
+  assert.equal(result.detected, 'en');
+  assert.equal(request.method, 'POST');
+  assert.equal(request.url, 'https://fanyi-api.baidu.com/api/trans/vip/translate');
+  assert.equal(request.headers['Content-Type'], 'application/x-www-form-urlencoded;charset=utf-8');
+  assert.equal(form.get('q'), 'Hello world');
+  assert.equal(form.get('from'), 'en');
+  assert.equal(form.get('to'), 'zh');
+  assert.equal(form.get('appid'), 'baidu-id');
+  assert.ok(salt);
+  assert.equal(form.get('sign'), createHash('md5').update(`baidu-idHello world${salt}baidu-secret`, 'utf8').digest('hex'));
+  assert.doesNotMatch(request.body, /baidu-secret/);
+});
+
+test('Baidu keeps separate translated lines from a multi-result response', async () => {
+  const translator = core.createTranslator(async () => ({
+    status: 200,
+    body: JSON.stringify({ from: 'en', to: 'zh', trans_result: [
+      { src: 'First line.', dst: '第一行。' },
+      { src: 'Second line.', dst: '第二行。' },
+    ] }),
+  }));
+  const result = await translator.translate('First line.\nSecond line.', {
+    engine: 'baidu', source: 'en', target: 'zh-Hans', baiduAppId: 'baidu-id', baiduSecretKey: 'baidu-secret',
+  });
+  assert.equal(result.text, '第一行。\n第二行。');
+  translator.dispose();
+});
+
+test('Alibaba translation signs the HTTPS JSON request and parses the general-edition response', async () => {
+  let request;
+  const translator = core.createTranslator(async (_, args) => {
+    request = args;
+    return { status: 200, body: JSON.stringify({ Code: 200, Data: { Translated: '你好', DetectedLanguage: 'en' } }) };
+  });
+  const result = await translator.translate('Hello', {
+    engine: 'alibaba', source: 'auto', target: 'zh-Hans',
+    alibabaAccessKeyId: 'aliyun-id', alibabaAccessKeySecret: 'aliyun-secret',
+  });
+  const headers = request.headers;
+  const body = request.body;
+  const contentMd5 = createHash('md5').update(body, 'utf8').digest('base64');
+  const nonce = headers['x-acs-signature-nonce'];
+  const toSign = `POST\napplication/json\n${contentMd5}\napplication/json;charset=utf-8\n${headers.Date}\nx-acs-signature-method:HMAC-SHA1\nx-acs-signature-nonce:${nonce}\nx-acs-version:2019-01-02\n/api/translate/web/general`;
+  const signature = createHmac('sha1', 'aliyun-secret').update(toSign, 'utf8').digest('base64');
+  assert.equal(result.text, '你好');
+  assert.equal(result.detected, 'en');
+  assert.equal(request.method, 'POST');
+  assert.equal(request.url, 'https://mt.cn-hangzhou.aliyuncs.com/api/translate/web/general');
+  assert.deepEqual(JSON.parse(body), { FormatType: 'text', SourceLanguage: 'auto', TargetLanguage: 'zh', SourceText: 'Hello', Scene: 'general' });
+  assert.equal(headers['Content-MD5'], contentMd5);
+  assert.equal(headers.Authorization, `acs aliyun-id:${signature}`);
+  assert.doesNotMatch(JSON.stringify(request), /aliyun-secret/);
+});
+
+test('Youdao translation signs its v3 form request and extracts the detected source language', async () => {
+  let request;
+  const translator = core.createTranslator(async (_, args) => {
+    request = args;
+    return { status: 200, body: JSON.stringify({ errorCode: '0', translation: ['你好'], l: 'en2zh-CHS' }) };
+  });
+  const result = await translator.translate('Hello', {
+    engine: 'youdao', source: 'auto', target: 'zh-Hans', youdaoAppId: 'youdao-id', youdaoAppKey: 'youdao-secret',
+  });
+  const form = new URLSearchParams(request.body);
+  const salt = form.get('salt'), curtime = form.get('curtime');
+  const expected = createHash('sha256').update(`youdao-idHello${salt}${curtime}youdao-secret`, 'utf8').digest('hex');
+  assert.equal(result.text, '你好');
+  assert.equal(result.detected, 'en');
+  assert.equal(request.method, 'POST');
+  assert.equal(request.url, 'https://openapi.youdao.com/api');
+  assert.equal(request.headers['Content-Type'], 'application/x-www-form-urlencoded;charset=utf-8');
+  assert.equal(form.get('appKey'), 'youdao-id');
+  assert.equal(form.get('q'), 'Hello');
+  assert.equal(form.get('from'), 'auto');
+  assert.equal(form.get('to'), 'zh-CHS');
+  assert.equal(form.get('signType'), 'v3');
+  assert.equal(form.get('sign'), expected);
+  assert.doesNotMatch(request.body, /youdao-secret/);
+});
+
+test('Youdao keeps separate translated lines from a multi-result response', async () => {
+  const translator = core.createTranslator(async () => ({
+    status: 200,
+    body: JSON.stringify({ errorCode: '0', translation: ['第一行。', '第二行。'], l: 'en2zh-CHS' }),
+  }));
+  const result = await translator.translate('First line.\nSecond line.', {
+    engine: 'youdao', source: 'en', target: 'zh-Hans', youdaoAppId: 'youdao-id', youdaoAppKey: 'youdao-secret',
+  });
+  assert.equal(result.text, '第一行。\n第二行。');
+  translator.dispose();
+});
+
+test('account-backed engines reject missing credentials before sending source text', async () => {
+  for (const engine of ['baidu', 'alibaba', 'youdao']) {
+    let requests = 0;
+    const translator = core.createTranslator(async () => { requests++; return { status: 200, body: '{}' }; });
+    await assert.rejects(translator.translate('Hello', { engine, source: 'en', target: 'zh-Hans' }), /配置|填写/);
+    assert.equal(requests, 0, `${engine} must validate its credentials locally`);
+  }
+});
 
 test('AI base URL accepts a complete endpoint and replaces the selected protocol', () => {
   assert.equal(typeof core.aiEndpoint, 'function');
